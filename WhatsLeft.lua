@@ -1,6 +1,9 @@
 -- HideKnownAppearances.lua
 local ADDON = ...
 
+-- Initialize localization
+local LOC = GetLocaleTable()
+
 ----------------------------------------------------------------
 -- PERSISTED UI STATE (init first; do NOT touch frames here)
 ----------------------------------------------------------------
@@ -354,17 +357,17 @@ if type(_G.TooltipHasAlreadyKnown) ~= "function" then
       local function has(fs)
         local t = _vkf_sanitize_lower(fs and fs:GetText())
         if not t then return false end
-        -- English tokens
-        if t:find("already known", 1, true) then return true end
-        if t:find("already collected", 1, true) then return true end
-        -- (Optional) tolerant fallback if you want:
-        -- if t:find("known", 1, true) and (t:find("collect",1,true) or t:find("appearance",1,true)) then return true end
+        -- Check against localized tokens
+        for _, token in ipairs(LOC.KNOWN_TOKENS or {}) do
+          if t:find(token, 1, true) then return true end
+        end
         return false
       end
       if has(L) or has(R) then found = true end
     end)
     return found
   end
+  _G.TooltipHasAlreadyKnown = TooltipHasAlreadyKnown
 end
 
 -- Escapes Lua pattern characters
@@ -428,6 +431,15 @@ local function VKF_PetCacheGet(itemID)
   end
 end
 
+-- Helper: Check if tooltip contains word boundaries for any token in list
+local function TooltipContainsAnyWord(slot, tokenList)
+  if not tokenList then return false end
+  for _, token in ipairs(tokenList) do
+    if TooltipContainsWordLower(slot, token) then return true end
+  end
+  return false
+end
+
 -- Returns: speciesID (number) if known exactly,
 --          true (boolean) if heuristically a pet (species unknown yet),
 --          nil if NOT a pet
@@ -448,11 +460,10 @@ local function ItemTeachesPet(slot, link)
 
   -- 3) Tooltip heuristic (locale-lite)
   if VKF_SafeScannerSetMerchantItem(slot) then
-    -- look for “battle”/“companion” or teaches+summon words
-    if TooltipContainsWordLower(slot, "battle")
-       or TooltipContainsWordLower(slot, "companion")
-       or (TooltipContainsWordLower(slot, "teaches") and TooltipContainsWordLower(slot, "summon"))
-       or TooltipContainsWordLower(slot, "pet") then
+    -- look for pet-related tokens
+    if TooltipContainsAnyWord(slot, LOC.PET_TOKENS)
+       or (TooltipContainsAnyWord(slot, LOC.TEACHES_TOKENS) and TooltipContainsAnyWord(slot, LOC.SUMMON_TOKENS))
+       then
       return true
     end
   end
@@ -485,7 +496,9 @@ local function IsPetKnown(slot, link)
   VKF_ScannerEachLine(function(L, R)
     local function check(fs)
       local t = _vkf_sanitize_lower(fs and fs:GetText()); if not t then return end
-      if t:find("collect", 1, true) then sawCollectWord = true end
+      for _, token in ipairs(LOC.COLLECTED_TOKENS or {}) do
+        if t:find(token, 1, true) then sawCollectWord = true break end
+      end
       local a = t:match("%((%d+)%s*/%s*%d+%)")
       if a and tonumber(a) and tonumber(a) > 0 then collected = true end
     end
@@ -519,6 +532,15 @@ local function TooltipContainsLower(slot, needleLC)
   return found
 end
 
+-- Helper: Check if tooltip contains any token from a localized list
+local function TooltipContainsAnyToken(slot, tokenList)
+  if not tokenList then return false end
+  for _, token in ipairs(tokenList) do
+    if TooltipContainsLower(slot, token) then return true end
+  end
+  return false
+end
+
 local function _vkf_pat_escape(s) return (s or ""):gsub("(%W)","%%%1") end
 local function TooltipContainsWordLower(slot, wordLC)
   if not VKF_SafeScannerSetMerchantItem(slot) then return false end
@@ -550,12 +572,9 @@ local function TooltipHasCollected(slot)
   return ok
 end
 
-local UNAVAILABLE_PATTERNS = {
-  "available with the release","available in","not yet available","unavailable","coming soon",
-}
 local function TooltipIsTemporarilyUnavailable(slot)
   if not VKF_IsValidSlot(slot) then return false end
-  for _, p in ipairs(UNAVAILABLE_PATTERNS) do
+  for _, p in ipairs(LOC.UNAVAILABLE_PATTERNS or {}) do
     if TooltipContainsLower(slot, p) then return true end
   end
   return false
@@ -567,11 +586,12 @@ end
 local function IsEnsemble(link, slot)
   if not link then return false end
   local name = (link:match("%[(.-)%]") or ""):lower()
-  if name:find("^ensemble:") or name:find("^arsenal:") then
-    return true
+  -- Check for ensemble/arsenal patterns from localization
+  for _, pattern in ipairs(LOC.ENSEMBLE_NAME_TOKENS or {}) do
+    if name:find(pattern, 1, true) then return true end
   end
   -- Fallback for any future wording: detect via tooltip text
-  if slot and TooltipContainsLower(slot, "collect the appearances") then
+  if slot and TooltipContainsAnyToken(slot, LOC.ENSEMBLE_TIP_TOKENS) then
     return true
   end
   return false
@@ -653,9 +673,9 @@ local function ItemTeachesToy(slot, link)
     end
   end
 
-  -- 2) Tooltip heuristic (works while info isn’t cached yet)
+  -- 2) Tooltip heuristic (works while info isn't cached yet)
   -- Keep it conservative to avoid false positives.
-  if TooltipContainsLower(slot, "use:") and TooltipContainsLower(slot, "toy") then
+  if TooltipContainsAnyToken(slot, LOC.USE_TOKENS) and TooltipContainsAnyToken(slot, LOC.TOY_TOKENS) then
     return itemID
   end
 
@@ -705,7 +725,7 @@ if not GetMerchantItemInfo(slot) then return false end
   end
 
   -- Tooltip fallback: require the word "mount"
-  if slot and TooltipContainsLower(slot, "mounts") then
+  if slot and TooltipContainsAnyToken(slot, LOC.MOUNT_TOKENS) then
     return true
   end
 
@@ -731,7 +751,7 @@ if not GetMerchantItemInfo(slot) then return false end
 
   -- Tooltip fallback: only match clear pet phrases (avoid catching mounts)
   if slot then
-    if TooltipContainsLower(slot, "battle pet") or TooltipContainsLower(slot, "companion") then
+    if TooltipContainsAnyToken(slot, LOC.PET_TOKENS) then
       return true
     end
   end
@@ -748,7 +768,7 @@ if not GetMerchantItemInfo(slot) then return false end
     if C_ToyBox.GetToyFromItemID and C_ToyBox.GetToyFromItemID(itemID) then return true end
     if C_ToyBox.GetToyInfo and C_ToyBox.GetToyInfo(itemID) then return true end
   end
-  if slot and TooltipContainsLower(slot, "toy") then
+  if slot and TooltipContainsAnyToken(slot, LOC.TOY_TOKENS) then
     return true
   end
   return false
@@ -882,8 +902,14 @@ if type(VKF_ToggleMini) ~= "function" then
         if cid and C_CurrencyInfo.GetCurrencyInfo then
           local info = C_CurrencyInfo.GetCurrencyInfo(cid)
           local nm = info and info.name or ""
-          if type(nm) == "string" and nm:lower():find("bronze", 1, true) then
-            total = total + amount
+          if type(nm) == "string" then
+            local nmLower = nm:lower()
+            for _, token in ipairs(LOC.BRONZE_TOKENS or {}) do
+              if nmLower:find(token, 1, true) then
+                total = total + amount
+                break
+              end
+            end
           end
         end
       end
@@ -913,8 +939,14 @@ local function VKF_BuildCategoryBreakdown()
         if cid and C_CurrencyInfo.GetCurrencyInfo then
           local info = C_CurrencyInfo.GetCurrencyInfo(cid)
           local nm = info and info.name or ""
-          if type(nm) == "string" and nm:lower():find("bronze", 1, true) then
-            total = total + amount
+          if type(nm) == "string" then
+            local nmLower = nm:lower()
+            for _, token in ipairs(LOC.BRONZE_TOKENS or {}) do
+              if nmLower:find(token, 1, true) then
+                total = total + amount
+                break
+              end
+            end
           end
         end
       end
@@ -991,14 +1023,14 @@ local function VKF_FillMiniWithBreakdown(f)
   end
 
   -- Title
-  f.title:SetText(string.format("Breakdown (%d/%d)", known, total))
+  f.title:SetText(string.format(LOC.UI_BREAKDOWN_TITLE, known, total))
 
   -- Build rows only for categories detected on this vendor
   local rows = {}
-  if stats.sets   and (stats.sets.count   or 0) > 0 then  table.insert(rows,   ("Sets Total:   %s / %s"):format(fmt(stats.sets.known),   fmt(stats.sets.total)))   end
-  if stats.mounts and (stats.mounts.count or 0) > 0 then  table.insert(rows, ("Mounts Total: %s / %s"):format(fmt(stats.mounts.known), fmt(stats.mounts.total))) end
-  if stats.pets   and (stats.pets.count   or 0) > 0 then  table.insert(rows,   ("Pets Total:   %s / %s"):format(fmt(stats.pets.known),   fmt(stats.pets.total)))   end
-  if stats.toys   and (stats.toys.count   or 0) > 0 then  table.insert(rows,   ("Toys Total:   %s / %s"):format(fmt(stats.toys.known),   fmt(stats.toys.total)))   end
+  if stats.sets   and (stats.sets.count   or 0) > 0 then  table.insert(rows,   LOC.UI_SETS_TOTAL_FMT:format(fmt(stats.sets.known),   fmt(stats.sets.total)))   end
+  if stats.mounts and (stats.mounts.count or 0) > 0 then  table.insert(rows, LOC.UI_MOUNTS_TOTAL_FMT:format(fmt(stats.mounts.known), fmt(stats.mounts.total))) end
+  if stats.pets   and (stats.pets.count   or 0) > 0 then  table.insert(rows,   LOC.UI_PETS_TOTAL_FMT:format(fmt(stats.pets.known),   fmt(stats.pets.total)))   end
+  if stats.toys   and (stats.toys.count   or 0) > 0 then  table.insert(rows,   LOC.UI_TOYS_TOTAL_FMT:format(fmt(stats.toys.known),   fmt(stats.toys.total)))   end
 
   -- Ensure the three line FontStrings exist
   if not f.line1 then f.line1 = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall") end
@@ -1154,7 +1186,7 @@ local function EnsureTotalsPanel()
   VKF_TotalsPanel:SetScript("OnSizeChanged", function(_, _, h) VKF_TotalsState.h = h end)
 
   local title = VKF_TotalsPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  title:SetPoint("TOPLEFT", 8, -6); title:SetText("Unlearned Total")
+  title:SetPoint("TOPLEFT", 8, -6); title:SetText(LOC.UI_UNLEARNED_TOTAL)
 
   VKF_TotalsPanel.money = CreateFrame("Frame", nil, VKF_TotalsPanel, "SmallMoneyFrameTemplate")
   VKF_TotalsPanel.money:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -4)
@@ -1356,7 +1388,7 @@ do
     local pick, bestAmt
     for _, e in pairs(totals.cur or {}) do
       local nm = (e.name or ""):lower()
-      if nm:find("bronze", 1, true) then pick = e; break end
+      if nm:find(LOC.BRONZE_TOKENS[1], 1, true) then pick = e; break end
       if e.amount and e.amount > 0 then
         if not bestAmt or e.amount > bestAmt then bestAmt = e.amount; pick = e end
       end
@@ -1393,7 +1425,7 @@ end
       local pick -- choose which currency to mirror (prefer Bronze by name)
       for _, entry in pairs(totals.cur or {}) do
         local nm = entry.name and entry.name:lower() or ""
-        if nm:find("bronze", 1, true) then pick = entry; break end
+        if nm:find(LOC.BRONZE_TOKENS[1], 1, true) then pick = entry; break end
       end
       -- fallback: take the largest currency if "Bronze" wasn’t found
       if not pick then
@@ -1411,7 +1443,7 @@ end
         -- icon identical size; text identical format "Name: |cffffffffamount|r"
         if pick.icon then b.icon:SetTexture(pick.icon) end
         local amtText = BreakUpLargeNumbers and BreakUpLargeNumbers(pick.amount) or tostring(pick.amount)
-        local label   = pick.name or "Bronze"
+        local label   = pick.name or (LOC.BRONZE_TOKENS[1]:gsub("^(.)", string.upper))
         b.text:SetText( string.format("%s: |cffffffff%s|r", label, amtText) )
 
         -- compute button width to fit icon + text exactly like a row
@@ -1639,8 +1671,8 @@ local function EnsureMenuButton()
 
   VKF_MenuButton:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
-    GameTooltip:AddLine("What's Left?", 1,1,1)
-    GameTooltip:AddLine("Click to see what's left to learn.", .9,.9,.9)
+    GameTooltip:AddLine(LOC.UI_GEAR_TIP_TITLE, 1,1,1)
+    GameTooltip:AddLine(LOC.UI_GEAR_TIP_DESC, .9,.9,.9)
     GameTooltip:Show()
   end)
   VKF_MenuButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -1756,7 +1788,7 @@ end)
   local title = CreateFrame("Frame", nil, panel)
   title:SetPoint("TOPLEFT", 6, -6); title:SetPoint("TOPRIGHT", -24, -6); title:SetHeight(22)
   local titleText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-  titleText:SetPoint("LEFT", title, "LEFT", 4, -1); titleText:SetText("What's Left?")
+  titleText:SetPoint("LEFT", title, "LEFT", 4, -1); titleText:SetText(LOC.UI_APP_TITLE)
 
   -- Close (X)
 -- Minimal, TSM-like close button (slightly thicker + smaller)
@@ -1858,7 +1890,7 @@ close:SetScript("OnClick", function() panel:Hide() end)
     self._lockText:ClearAllPoints()
     self._lockText:SetPoint("BOTTOMRIGHT", -18, 6)
     self._lockText:SetJustifyH("RIGHT")
-    self._lockText:SetText(locked and "|cffffffffFrame: |cffff5555Locked|r" or "|cffffffffFrame: |cff88ff88Unlocked|r")
+    self._lockText:SetText(locked and LOC.UI_LOCK_TEXT_LOCKED or LOC.UI_LOCK_TEXT_UNLOCKED)
 
     if self._sizer then
       local n = self._sizer:GetNormalTexture()
@@ -1895,7 +1927,7 @@ close:SetScript("OnClick", function() panel:Hide() end)
     end)
     if opts.disabled then
       cb:Disable(); cb:SetAlpha(0.7); cb.text:SetTextColor(0.7,0.7,0.7)
-      cb:SetScript("OnEnter", function(self) GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:AddLine("Coming soon", 1,1,1); GameTooltip:Show() end)
+      cb:SetScript("OnEnter", function(self) GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:AddLine(LOC.UI_COMING_SOON, 1,1,1); GameTooltip:Show() end)
       cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
     end
     table.insert(panel._checks, { cb = cb, key = key })
@@ -1905,13 +1937,13 @@ close:SetScript("OnClick", function() panel:Hide() end)
   -- Section 1: Hide Known
   local section1 = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
   section1:SetPoint("TOPLEFT", 10, TOP_Y)
-  section1:SetText("Hide Known")
+  section1:SetText(LOC.UI_SECTION_HIDE_KNOWN)
 
   local y = TOP_Y - 22
-  makeCheck(y, "Sets",   "VKF_HideSets");   y = y - ROW_H
-  makeCheck(y, "Mounts", "VKF_HideMounts"); y = y - ROW_H
-  makeCheck(y, "Pets",   "VKF_HidePets");   y = y - ROW_H
-  makeCheck(y, "Toys",   "VKF_HideToys");   y = y - ROW_H
+  makeCheck(y, LOC.UI_LABEL_SETS,   "VKF_HideSets");   y = y - ROW_H
+  makeCheck(y, LOC.UI_LABEL_MOUNTS, "VKF_HideMounts"); y = y - ROW_H
+  makeCheck(y, LOC.UI_LABEL_PETS,   "VKF_HidePets");   y = y - ROW_H
+  makeCheck(y, LOC.UI_LABEL_TOYS,   "VKF_HideToys");   y = y - ROW_H
 
   -- spacing controls
   local PAD_BELOW_FIRST    = 18
@@ -1929,13 +1961,13 @@ close:SetScript("OnClick", function() panel:Hide() end)
   -- Section 2: Skip Unavailable
   local section2 = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
   section2:SetPoint("TOPLEFT", 10, dividerY - PAD_TITLE_FROM_DIV)
-  section2:SetText("Hide Currently Unavailable")
+  section2:SetText(LOC.UI_SECTION_HIDE_UNAVAILABLE)
 
   y = dividerY - (PAD_TITLE_FROM_DIV + PAD_FIRST_CHECK)
-  makeCheck(y, "Sets",   "VKF_SkipUnavail_Sets");   y = y - ROW_H
-  makeCheck(y, "Mounts", "VKF_SkipUnavail_Mounts"); y = y - ROW_H
-  makeCheck(y, "Pets",   "VKF_SkipUnavail_Pets");   y = y - ROW_H
-  makeCheck(y, "Toys",   "VKF_SkipUnavail_Toys")
+  makeCheck(y, LOC.UI_LABEL_SETS,   "VKF_SkipUnavail_Sets");   y = y - ROW_H
+  makeCheck(y, LOC.UI_LABEL_MOUNTS, "VKF_SkipUnavail_Mounts"); y = y - ROW_H
+  makeCheck(y, LOC.UI_LABEL_PETS,   "VKF_SkipUnavail_Pets");   y = y - ROW_H
+  makeCheck(y, LOC.UI_LABEL_TOYS,   "VKF_SkipUnavail_Toys")
 
   panel:ApplyLock()
   panel:Hide()
@@ -2265,10 +2297,10 @@ SlashCmdList["WHATSLEFT"] = function(msg)
 
   elseif msg == "rescan" or msg == "refresh" or msg == "fix" then
     if HKA and HKA.Refresh then HKA:Refresh() end
-    print("|cff50fa7bWhat's Left:|r forced a vendor rescan.")
+    print("|cff50fa7b" .. LOC.UI_APP_NAME .. ":|r forced a vendor rescan.")
 
   elseif msg == "help" then
-    print("|cff66ccffWhat's Left commands:|r")
+    print("|cff66ccff" .. LOC.UI_APP_NAME .. " commands:|r")
     print("/wl            – open/close the menu")
     print("/wl rescan     – force vendor refresh")
     print("/wl help       – show this help")
@@ -2373,7 +2405,7 @@ local function VKF_EnsureChangelogFrame()
 
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
   title:SetPoint("TOPLEFT", 12, -10)
-  title:SetText("|cff66ccffWhat’s Left|r – Changelog")
+  title:SetText(LOC.UI_CHANGELOG_TITLE_FMT:format(LOC.UI_APP_NAME))
 
   local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", 2, 2)
