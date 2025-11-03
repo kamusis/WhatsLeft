@@ -724,8 +724,8 @@ if not GetMerchantItemInfo(slot) then return false end
     end
   end
 
-  -- Tooltip fallback: require the word "mount"
-  if slot and TooltipContainsAnyToken(slot, LOC.MOUNT_TOKENS) then
+  -- Tooltip fallback: require the word "mount" but exclude toys
+  if slot and TooltipContainsAnyToken(slot, LOC.MOUNT_TOKENS) and not TooltipContainsAnyToken(slot, LOC.TOY_TOKENS) then
     return true
   end
 
