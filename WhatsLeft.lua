@@ -1896,9 +1896,9 @@ close:SetScript("OnClick", function() panel:Hide() end)
       local n = self._sizer:GetNormalTexture()
       local h = self._sizer:GetHighlightTexture()
       local p = self._sizer:GetPushedTexture()
-      if n then n:SetDesaturated(locked and 1 or 0) end
-      if h then h:SetDesaturated(locked and 1 or 0) end
-      if p then p:SetDesaturated(locked and 1 or 0) end
+      if n then n:SetDesaturated(locked and true or false) end
+      if h then h:SetDesaturated(locked and true or false) end
+      if p then p:SetDesaturated(locked and true or false) end
       self._sizer:SetAlpha(locked and 0.7 or 1)
     end
   end
